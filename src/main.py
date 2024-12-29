@@ -1,35 +1,49 @@
 import os
 import time
-import openai
 from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
+from selenium.common.exceptions import NoSuchElementException
 
 from bets import (
     navigate_to_football_live,
     scrape_matches,
-    analyze_match_data,
+    pick_bet_type,
     place_bet
 )
 from auth import login_sts
+
+def get_balance(driver):
+    try:
+        balance_el = driver.find_element(
+            By.CSS_SELECTOR, 
+            "sts-shared-icon-button-deposit-info .icon-button-deposit-info__amount"
+        )
+        raw_text = balance_el.text.strip()
+        cleaned_text = raw_text.replace("zł", "").replace("\xa0", "").strip()
+        cleaned_text = cleaned_text.replace(",", ".")
+        return float(cleaned_text)
+    except NoSuchElementException:
+        print("Could not find the deposit info element. Returning 0.0.")
+        return 0.0
+    except ValueError:
+        print("Error parsing balance text. Returning 0.0.")
+        return 0.0
+    except Exception as e:
+        print(f"Unexpected error reading balance: {e}")
+        return 0.0
 
 def main():
     load_dotenv()
 
     username = os.getenv("STS_USERNAME")
     password = os.getenv("STS_PASSWORD")
-    ai_key = os.getenv("AI_KEY_SECRET")
 
     if not username or not password:
         print("Missing STS_USERNAME or STS_PASSWORD in .env!")
         return
-
-    if not ai_key:
-        print("Missing AI_KEY_SECRET in .env!")
-        return
-
-    openai.api_key = ai_key
 
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service)
@@ -38,34 +52,45 @@ def main():
         login_sts(driver, username, password)
         input("If a captcha appeared, solve it manually. Press Enter when finished...")
 
-        print("Logged in successfully. Starting further actions...")
+        print("Logged in successfully. Starting the betting loop...")
 
-        navigate_to_football_live(driver)
-
-        matches = scrape_matches(driver)
-        print(f"Found {len(matches)} matches...")
-
-        for match_data in matches:
-            analysis = analyze_match_data(match_data)
-            if not analysis:
+        betted_matches = set()
+        while True:
+            balance = get_balance(driver)
+            print(f"Current balance: {balance:.2f} zł")
+            
+            if balance < 2.0:
+                print("Balance is below 2.00 zł, skipping bets this round.")
+                print("Waiting 60 seconds before next check...\n")
+                time.sleep(60)
                 continue
 
-            bet_type = analysis["bet_type"]
-            odd_val = analysis["odd_value"]
+            navigate_to_football_live(driver)
+            matches = scrape_matches(driver)
+            print(f"Found {len(matches)} matches...")
 
-            if odd_val < 1.15:
-                print(f"AI recommended {bet_type}, but odd {odd_val} < 1.15. Skipping.")
-                continue
+            for (match_el, match_info) in matches:
+                match_id = match_info["match_id"]
+                if not match_id:
+                    continue
 
-            print(f"Betting on {bet_type} with odd {odd_val} for match: "
-                  f"{match_data['team_home']} vs {match_data['team_away']}")
-            place_bet(driver, bet_type)
+                if match_id in betted_matches:
+                    continue
 
-            break 
-        # TODO: Implement a loop to bet on multiple matches
-        # TODO: Implement a way, to check if the bet is not been betted previously
+                outcome = pick_bet_type(match_info)
+                if outcome is None:
+                    continue
 
-        input("Press Enter to quit...")
+                bet_type, odd_val = outcome
+                print(f"Placing bet: {bet_type} (odd={odd_val:.2f}) on match "
+                      f"{match_info['team_home']} vs {match_info['team_away']}")
+
+                place_bet(driver, match_el, bet_type)
+
+                betted_matches.add(match_id)
+
+            print("Done checking. Waiting 60 seconds before next check...\n")
+            time.sleep(60)
 
     finally:
         driver.quit()

@@ -1,6 +1,5 @@
-import os
 import time
-import openai
+import re
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
 
@@ -18,14 +17,33 @@ def parse_odd_text(odd_str):
     except ValueError:
         return 0.0
 
+def parse_match_minute(time_str):
+    match = re.search(r"(\d+)'", time_str)
+    if match:
+        return int(match.group(1))
+    return 0
+
 def scrape_matches(driver):
+
     matches_data = []
+
     all_match_containers = driver.find_elements(
         By.CSS_SELECTOR, "div.collapsable-container bb-live-match-tile"
     )
 
     for match_el in all_match_containers:
         try:
+            anchor = match_el.find_element(By.CSS_SELECTOR, "a")
+            data_cy = anchor.get_attribute("data-cy")
+            href = anchor.get_attribute("href")
+
+            if data_cy and "/" in data_cy:
+                match_id = data_cy.split("/")[-1]
+            elif href and "/" in href:
+                match_id = href.split("/")[-1]
+            else:
+                match_id = None
+
             team_elements = match_el.find_elements(
                 By.CSS_SELECTOR, ".match-tile-scoreboard-team__name span"
             )
@@ -41,13 +59,10 @@ def scrape_matches(driver):
             )
             match_time_str = " / ".join(e.text for e in time_elements if e.text)
 
-            score_elements = match_el.find_elements(
-                By.CSS_SELECTOR, ".live-match-tile-scoreboard-score__partials div"
-            )
-            score_parts = [s.text.strip() for s in score_elements if s.text.strip()]
+            # Parse the approximate match minute from the string
+            time_min = parse_match_minute(match_time_str)
 
             odds_buttons = match_el.find_elements(By.CSS_SELECTOR, "sds-odds-button")
-
             if len(odds_buttons) >= 3:
                 odd_home_str = odds_buttons[0].find_element(
                     By.CSS_SELECTOR, "[data-testid='odds-value']").text
@@ -65,109 +80,67 @@ def scrape_matches(driver):
             odd_away = parse_odd_text(odd_away_str)
 
             match_info = {
+                "match_id": match_id,
                 "team_home": team_home,
                 "team_away": team_away,
                 "time_str": match_time_str,
-                "score_parts": score_parts,
+                "time_min": time_min,
                 "odd_home": odd_home,
                 "odd_draw": odd_draw,
                 "odd_away": odd_away
             }
-            matches_data.append(match_info)
+
+            matches_data.append((match_el, match_info))
 
         except Exception as e:
             print(f"Error parsing match element: {e}")
 
     return matches_data
 
-def call_chatgpt_for_bet(match_info):
-    system_prompt = (
-        "You are a helpful assistant that recommends a betting outcome "
-        "for a football match. You analyse data and let me know probability of best income. Respond with just one word: "
-        "'home', 'draw', or 'away'."
-    )
-    user_prompt = (
-        f"Match: {match_info['team_home']} vs {match_info['team_away']}\n"
-        f"Time: {match_info['time_str']}\n"
-        f"Odds:\n"
-        f"  Home = {match_info['odd_home']}\n"
-        f"  Draw = {match_info['odd_draw']}\n"
-        f"  Away = {match_info['odd_away']}\n"
-        "Which outcome do you recommend to bet on, in one word?"
-    )
-
-    try:
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.0,
-            max_tokens=1
-        )
-
-        ai_reply = response.choices[0].message.content.strip().lower()
-
-        if "home" in ai_reply:
-            return "home"
-        elif "draw" in ai_reply or "tie" in ai_reply:
-            return "draw"
-        elif "away" in ai_reply:
-            return "away"
-        else:
-            return None
-
-    except Exception as e:
-        print(f"Error calling ChatGPT API: {e}")
+def pick_bet_type(match_info):
+    if match_info["time_min"] < 80:
         return None
 
-def analyze_match_data(match_info):
-    recommended_outcome = call_chatgpt_for_bet(match_info)
-    if not recommended_outcome:
+    candidates = [
+        ("home", match_info["odd_home"]),
+        ("draw", match_info["odd_draw"]),
+        ("away", match_info["odd_away"])
+    ]
+
+    valid = [(outcome, oddval) for (outcome, oddval) in candidates 
+             if 1.15 <= oddval <= 2.0]
+
+    if not valid:
         return None
 
-    outcome_odd = 0.0
-    if recommended_outcome == "home":
-        outcome_odd = match_info["odd_home"]
-    elif recommended_outcome == "draw":
-        outcome_odd = match_info["odd_draw"]
-    elif recommended_outcome == "away":
-        outcome_odd = match_info["odd_away"]
-    else:
-        return None
+    best_outcome, best_odd = min(valid, key=lambda x: x[1])
+    return best_outcome, best_odd
 
-    return {
-        "bet_type": recommended_outcome,
-        "odd_value": outcome_odd
-    }
-
-def place_bet(driver, bet_type):
+def place_bet(driver, match_el, bet_type):
     label_map = {
         "home": "1",
         "draw": "x",
         "away": "2"
     }
-    label_to_find = label_map.get(bet_type, None)
+    label_to_find = label_map.get(bet_type)
     if not label_to_find:
         print(f"Unknown bet_type={bet_type}. Aborting.")
         return
 
     try:
-        odds_buttons = driver.find_elements(By.CSS_SELECTOR, "sds-odds-button")
-
+        odds_buttons = match_el.find_elements(By.CSS_SELECTOR, "sds-odds-button")
         for btn in odds_buttons:
             try:
                 label_el = btn.find_element(By.CSS_SELECTOR, ".odds-button__label")
                 if label_el.text.strip().lower() == label_to_find.lower():
                     btn.click()
-                    print(f"Clicked odds button '{label_el.text.strip()}'")
-                    time.sleep(1)
+                    print(f"Clicked odds button '{label_el.text.strip()}' in this match tile.")
+                    time.sleep(2)
                     break
             except NoSuchElementException:
                 pass
     except Exception as e:
-        print(f"Error selecting bet {bet_type}: {e}")
+        print(f"Error selecting bet {bet_type} in match tile: {e}")
         return
 
     try:
@@ -176,16 +149,16 @@ def place_bet(driver, bet_type):
             label_el = driver.find_element(By.CSS_SELECTOR, "bb-ticket-toleration .toggle-label")
             label_el.click()
             print("Toggled 'Akceptuję zmiany kursów'")
-            time.sleep(1)
+            time.sleep(3)
     except NoSuchElementException:
-        print("Could not find 'Akceptuję zmiany kursów' toggle. Possibly not needed in your session.")
+        print("Could not find 'Akceptuję zmiany kursów' toggle.")
 
     try:
         stake_input = driver.find_element(By.CSS_SELECTOR, "sts-shared-input[data-cy='ticket-stake'] input#AMOUNT")
         stake_input.clear()
         stake_input.send_keys("2.00")
         print("Stake set to 2.00")
-        time.sleep(1)
+        time.sleep(3)
     except NoSuchElementException:
         print("Stake input not found!")
 
@@ -193,6 +166,6 @@ def place_bet(driver, bet_type):
         bet_button = driver.find_element(By.CSS_SELECTOR, "button[data-testid='button-place-a-bet']")
         bet_button.click()
         print("Bet placed!")
-        time.sleep(2)
+        time.sleep(10)
     except NoSuchElementException:
-        print("Could not find the final bet button. Maybe the slip changed or an error occurred.")
+        print("Could not find final bet button.")
