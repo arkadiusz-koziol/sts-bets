@@ -59,7 +59,6 @@ def scrape_matches(driver):
             )
             match_time_str = " / ".join(e.text for e in time_elements if e.text)
 
-            # Parse the approximate match minute from the string
             time_min = parse_match_minute(match_time_str)
 
             odds_buttons = match_el.find_elements(By.CSS_SELECTOR, "sds-odds-button")
@@ -98,7 +97,7 @@ def scrape_matches(driver):
     return matches_data
 
 def pick_bet_type(match_info):
-    if match_info["time_min"] < 80:
+    if match_info["time_min"] < 79:
         return None
 
     candidates = [
@@ -149,7 +148,7 @@ def place_bet(driver, match_el, bet_type):
             label_el = driver.find_element(By.CSS_SELECTOR, "bb-ticket-toleration .toggle-label")
             label_el.click()
             print("Toggled 'Akceptuję zmiany kursów'")
-            time.sleep(3)
+            time.sleep(2)
     except NoSuchElementException:
         print("Could not find 'Akceptuję zmiany kursów' toggle.")
 
@@ -158,14 +157,17 @@ def place_bet(driver, match_el, bet_type):
         stake_input.clear()
         stake_input.send_keys("2.00")
         print("Stake set to 2.00")
-        time.sleep(3)
+        time.sleep(2)
     except NoSuchElementException:
         print("Stake input not found!")
 
     try:
         bet_button = driver.find_element(By.CSS_SELECTOR, "button[data-testid='button-place-a-bet']")
         bet_button.click()
+        time.sleep(2)
+        bet_button = driver.find_element(By.CSS_SELECTOR, "button[data-testid='button-place-a-bet']")
+        bet_button.click()
         print("Bet placed!")
-        time.sleep(10)
+        time.sleep(4)
     except NoSuchElementException:
         print("Could not find final bet button.")

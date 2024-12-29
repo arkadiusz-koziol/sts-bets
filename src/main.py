@@ -1,12 +1,12 @@
-import os
-import time
-from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException
-
+from dotenv import load_dotenv
+import os
+import time
+from webdriver_manager.chrome import ChromeDriverManager
 from bets import (
     navigate_to_football_live,
     scrape_matches,
@@ -46,7 +46,13 @@ def main():
         return
 
     service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service)
+    options = Options()
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+
+    driver = webdriver.Chrome(service=service, options=options)
+
 
     try:
         login_sts(driver, username, password)
@@ -55,6 +61,7 @@ def main():
         print("Logged in successfully. Starting the betting loop...")
 
         betted_matches = set()
+
         while True:
             balance = get_balance(driver)
             print(f"Current balance: {balance:.2f} zł")
@@ -63,6 +70,7 @@ def main():
                 print("Balance is below 2.00 zł, skipping bets this round.")
                 print("Waiting 60 seconds before next check...\n")
                 time.sleep(60)
+                navigate_to_football_live(driver)
                 continue
 
             navigate_to_football_live(driver)
@@ -86,9 +94,7 @@ def main():
                       f"{match_info['team_home']} vs {match_info['team_away']}")
 
                 place_bet(driver, match_el, bet_type)
-
                 betted_matches.add(match_id)
-
             print("Done checking. Waiting 60 seconds before next check...\n")
             time.sleep(60)
 
