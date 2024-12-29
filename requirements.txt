@@ -1,2 +1,3 @@
 selenium
 webdriver_manager
+openai === 1.0.0
