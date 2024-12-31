@@ -38,7 +38,9 @@ def save_bets_data(bets_data):
 
     data_to_save = {
         "betted_matches": list(bets_data["betted_matches"]),
-        "bets_details": bets_data["bets_details"]
+        "bets_details": bets_data["bets_details"],
+        "last_saved": time.strftime("%Y-%m-%d %H:%M:%S")
+
     }
     try:
         with open(json_path, "w", encoding="utf-8") as f:

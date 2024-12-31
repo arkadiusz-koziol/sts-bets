@@ -23,7 +23,7 @@ def parse_match_minute(time_str):
         return int(match.group(1))
     return 0
 
-def scrape_matches(driver):
+def scrape_football_matches(driver):
     matches_data = []
 
     all_match_containers = driver.find_elements(
@@ -43,9 +43,7 @@ def scrape_matches(driver):
             else:
                 match_id = None
 
-            team_elements = match_el.find_elements(
-                By.CSS_SELECTOR, ".match-tile-scoreboard-team__name span"
-            )
+            team_elements = match_el.find_elements(By.CSS_SELECTOR, ".match-tile-scoreboard-team__name span")
             if len(team_elements) == 2:
                 team_home = team_elements[0].text.strip()
                 team_away = team_elements[1].text.strip()
@@ -53,21 +51,16 @@ def scrape_matches(driver):
                 team_home = "Unknown"
                 team_away = "Unknown"
 
-            time_elements = match_el.find_elements(
-                By.CSS_SELECTOR, ".live-match-tile-time-details__game-name"
-            )
+            time_elements = match_el.find_elements(By.CSS_SELECTOR, ".live-match-tile-time-details__game-name")
             match_time_str = " / ".join(e.text for e in time_elements if e.text)
 
             time_min = parse_match_minute(match_time_str)
 
             odds_buttons = match_el.find_elements(By.CSS_SELECTOR, "sds-odds-button")
             if len(odds_buttons) >= 3:
-                odd_home_str = odds_buttons[0].find_element(
-                    By.CSS_SELECTOR, "[data-testid='odds-value']").text
-                odd_draw_str = odds_buttons[1].find_element(
-                    By.CSS_SELECTOR, "[data-testid='odds-value']").text
-                odd_away_str = odds_buttons[2].find_element(
-                    By.CSS_SELECTOR, "[data-testid='odds-value']").text
+                odd_home_str = odds_buttons[0].find_element(By.CSS_SELECTOR, "[data-testid='odds-value']").text
+                odd_draw_str = odds_buttons[1].find_element(By.CSS_SELECTOR, "[data-testid='odds-value']").text
+                odd_away_str = odds_buttons[2].find_element(By.CSS_SELECTOR, "[data-testid='odds-value']").text
             else:
                 odd_home_str = "0.00"
                 odd_draw_str = "0.00"
@@ -91,14 +84,14 @@ def scrape_matches(driver):
             matches_data.append((match_el, match_info))
 
         except StaleElementReferenceException:
-            print("Stale element encountered, skipping this match.")
+            print("[FOOTBALL] Stale element, skipping.")
             continue
         except Exception as e:
-            print(f"Error parsing match element: {e}")
+            print(f"[FOOTBALL] Error parsing match: {e}")
 
     return matches_data
 
-def pick_bet_type(match_info):
+def pick_football_bet_type(match_info):
     if match_info["time_min"] < 79:
         return None
 
@@ -108,21 +101,16 @@ def pick_bet_type(match_info):
         ("away", match_info["odd_away"])
     ]
 
-    valid = [(outcome, oddval) for (outcome, oddval) in candidates 
-             if 1.15 <= oddval <= 2.0]
-
+    valid = [(outcome, val) for (outcome, val) in candidates if 1.15 <= val <= 2.0]
     if not valid:
         return None
 
     best_outcome, best_odd = min(valid, key=lambda x: x[1])
     return best_outcome, best_odd
 
+
 def place_bet(driver, match_el, bet_type):
-    label_map = {
-        "home": "1",
-        "draw": "x",
-        "away": "2"
-    }
+    label_map = {"home": "1", "draw": "x", "away": "2"}
     label_to_find = label_map.get(bet_type)
     if not label_to_find:
         print(f"Unknown bet_type={bet_type}. Aborting.")
@@ -135,16 +123,16 @@ def place_bet(driver, match_el, bet_type):
                 label_el = btn.find_element(By.CSS_SELECTOR, ".odds-button__label")
                 if label_el.text.strip().lower() == label_to_find.lower():
                     btn.click()
-                    print(f"Clicked odds button '{label_el.text.strip()}' in this match tile.")
+                    print(f"[3 labeled] Clicked odds '{label_el.text.strip()}' in tile.")
                     time.sleep(2)
                     break
             except NoSuchElementException:
                 pass
     except Exception as e:
-        print(f"Error selecting bet {bet_type} in match tile: {e}")
+        print(f"[place_bet] Error selecting bet {bet_type} in match tile: {e}")
         return (0, 0)
 
-    stake_used = 2.00
+    stake_used = 2.0
     try:
         stake_input = driver.find_element(By.CSS_SELECTOR, "sts-shared-input[data-cy='ticket-stake'] input#AMOUNT")
         stake_input.clear()
@@ -152,14 +140,14 @@ def place_bet(driver, match_el, bet_type):
         print(f"Stake set to {stake_used:.2f}")
         time.sleep(2)
     except NoSuchElementException:
-        print("Stake input not found!")
+        print("[place_bet] Stake input not found!")
         return (0, 0)
 
     potential_win = 0.0
     try:
         place_bet_button = driver.find_element(By.CSS_SELECTOR, "button[data-testid='button-place-a-bet']")
         potential_el = place_bet_button.find_element(By.CSS_SELECTOR, ".submit-button__content")
-        raw_text = potential_el.text.strip()
+        raw_text = potential_el.text.strip()  # e.g. "2,28 zł"
         cleaned = raw_text.replace(",", ".").replace("zł", "").replace("\xa0", "").strip()
         potential_win = float(cleaned)
         print(f"Potential win: {potential_win:.2f} zł")
@@ -176,6 +164,6 @@ def place_bet(driver, match_el, bet_type):
         time.sleep(4)
     except NoSuchElementException:
         print("Could not find final bet button (second click).")
-        return (0, 0)
+        return (0, potential_win)
 
     return (stake_used, potential_win)

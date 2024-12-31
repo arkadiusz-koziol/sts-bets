@@ -4,3 +4,4 @@
 venv
 /srv/venv
 /src/db
+__pycache__

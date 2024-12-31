@@ -1,0 +1,33 @@
+{
+  "betted_matches": [
+    "11632429",
+    "11627764",
+    "11461403"
+  ],
+  "bets_details": [
+    {
+      "sport": "football",
+      "match_id": "11632429",
+      "teams": "Al-Hilal Omdurman vs Chemal",
+      "stake": 2.0,
+      "potential_win": 11.08,
+      "balance_after": 6.63
+    },
+    {
+      "sport": "hockey",
+      "match_id": "11461403",
+      "teams": "Vegas Golden Knights vs Montreal",
+      "stake": 2.0,
+      "potential_win": 11.26,
+      "balance_after": 4.84
+    },
+    {
+      "sport": "hockey",
+      "match_id": "11627764",
+      "teams": "Belleville Senators vs Utica Comets",
+      "stake": 2.0,
+      "potential_win": 15.92,
+      "balance_after": 2.84
+    }
+  ]
+}
