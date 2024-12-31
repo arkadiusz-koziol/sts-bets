@@ -1,39 +1,23 @@
+import os
+import time
+from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException
-from dotenv import load_dotenv
-import os
-import time
 from webdriver_manager.chrome import ChromeDriverManager
-from bets import (
+from football.bets import (
     navigate_to_football_live,
     scrape_matches,
     pick_bet_type,
     place_bet
 )
 from auth import login_sts
-
-def get_balance(driver):
-    try:
-        balance_el = driver.find_element(
-            By.CSS_SELECTOR, 
-            "sts-shared-icon-button-deposit-info .icon-button-deposit-info__amount"
-        )
-        raw_text = balance_el.text.strip()
-        cleaned_text = raw_text.replace("zł", "").replace("\xa0", "").strip()
-        cleaned_text = cleaned_text.replace(",", ".")
-        return float(cleaned_text)
-    except NoSuchElementException:
-        print("Could not find the deposit info element. Returning 0.0.")
-        return 0.0
-    except ValueError:
-        print("Error parsing balance text. Returning 0.0.")
-        return 0.0
-    except Exception as e:
-        print(f"Unexpected error reading balance: {e}")
-        return 0.0
+from football.bet_logic import (
+    load_bets_data,
+    save_bets_data,
+    get_balance,
+    clear_basket
+)
 
 def main():
     load_dotenv()
@@ -53,24 +37,22 @@ def main():
 
     driver = webdriver.Chrome(service=service, options=options)
 
-
     try:
         login_sts(driver, username, password)
         input("If a captcha appeared, solve it manually. Press Enter when finished...")
+        print("Logged in successfully.")
 
-        print("Logged in successfully. Starting the betting loop...")
-
-        betted_matches = set()
+        bets_data = load_bets_data()
+        print(f"Loaded data: {len(bets_data['betted_matches'])} matches already bet.")
 
         while True:
+            clear_basket(driver)
+
             balance = get_balance(driver)
             print(f"Current balance: {balance:.2f} zł")
-            
             if balance < 2.0:
-                print("Balance is below 2.00 zł, skipping bets this round.")
-                print("Waiting 60 seconds before next check...\n")
+                print("Balance < 2.0, skipping bets.")
                 time.sleep(60)
-                navigate_to_football_live(driver)
                 continue
 
             navigate_to_football_live(driver)
@@ -82,7 +64,7 @@ def main():
                 if not match_id:
                     continue
 
-                if match_id in betted_matches:
+                if match_id in bets_data["betted_matches"]:
                     continue
 
                 outcome = pick_bet_type(match_info)
@@ -90,12 +72,29 @@ def main():
                     continue
 
                 bet_type, odd_val = outcome
-                print(f"Placing bet: {bet_type} (odd={odd_val:.2f}) on match "
-                      f"{match_info['team_home']} vs {match_info['team_away']}")
+                print(f"Attempting bet: {bet_type}, odd={odd_val:.2f} on {match_info['team_home']} vs {match_info['team_away']}")
 
-                place_bet(driver, match_el, bet_type)
-                betted_matches.add(match_id)
-            print("Done checking. Waiting 60 seconds before next check...\n")
+                if get_balance(driver) < 2.0:
+                    print("Balance dropped below 2.0, skipping bet.")
+                    continue
+
+                stake_used, potential_win = place_bet(driver, match_el, bet_type)
+                if stake_used == 0:
+                    print("Bet not placed. Possibly an error. Skipping.")
+                    continue
+
+                bets_data["betted_matches"].add(match_id)
+                bets_data["bets_details"].append({
+                    "match_id": match_id,
+                    "teams": f"{match_info['team_home']} vs {match_info['team_away']}",
+                    "stake": stake_used,
+                    "potential_win": potential_win,
+                    "balance_after": get_balance(driver),
+                })
+
+                save_bets_data(bets_data)
+
+            print("Done checking. Sleep 60s...\n")
             time.sleep(60)
 
     finally:

@@ -1,7 +1,7 @@
 import time
 import re
 from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException
+from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException
 
 def navigate_to_football_live(driver):
     driver.get("https://www.sts.pl/live/pilka-nozna")
@@ -24,7 +24,6 @@ def parse_match_minute(time_str):
     return 0
 
 def scrape_matches(driver):
-
     matches_data = []
 
     all_match_containers = driver.find_elements(
@@ -91,6 +90,9 @@ def scrape_matches(driver):
 
             matches_data.append((match_el, match_info))
 
+        except StaleElementReferenceException:
+            print("Stale element encountered, skipping this match.")
+            continue
         except Exception as e:
             print(f"Error parsing match element: {e}")
 
@@ -124,7 +126,7 @@ def place_bet(driver, match_el, bet_type):
     label_to_find = label_map.get(bet_type)
     if not label_to_find:
         print(f"Unknown bet_type={bet_type}. Aborting.")
-        return
+        return (0, 0)
 
     try:
         odds_buttons = match_el.find_elements(By.CSS_SELECTOR, "sds-odds-button")
@@ -140,34 +142,40 @@ def place_bet(driver, match_el, bet_type):
                 pass
     except Exception as e:
         print(f"Error selecting bet {bet_type} in match tile: {e}")
-        return
+        return (0, 0)
 
-    try:
-        toggle_checkbox = driver.find_element(By.CSS_SELECTOR, "bb-ticket-toleration input#toleration")
-        if not toggle_checkbox.is_selected():
-            label_el = driver.find_element(By.CSS_SELECTOR, "bb-ticket-toleration .toggle-label")
-            label_el.click()
-            print("Toggled 'Akceptuję zmiany kursów'")
-            time.sleep(2)
-    except NoSuchElementException:
-        print("Could not find 'Akceptuję zmiany kursów' toggle.")
-
+    stake_used = 2.00
     try:
         stake_input = driver.find_element(By.CSS_SELECTOR, "sts-shared-input[data-cy='ticket-stake'] input#AMOUNT")
         stake_input.clear()
-        stake_input.send_keys("2.00")
-        print("Stake set to 2.00")
+        stake_input.send_keys(str(stake_used))
+        print(f"Stake set to {stake_used:.2f}")
         time.sleep(2)
     except NoSuchElementException:
         print("Stake input not found!")
+        return (0, 0)
+
+    potential_win = 0.0
+    try:
+        place_bet_button = driver.find_element(By.CSS_SELECTOR, "button[data-testid='button-place-a-bet']")
+        potential_el = place_bet_button.find_element(By.CSS_SELECTOR, ".submit-button__content")
+        raw_text = potential_el.text.strip()
+        cleaned = raw_text.replace(",", ".").replace("zł", "").replace("\xa0", "").strip()
+        potential_win = float(cleaned)
+        print(f"Potential win: {potential_win:.2f} zł")
+    except Exception:
+        print("Could not parse potential win from the button. Setting 0.0")
 
     try:
-        bet_button = driver.find_element(By.CSS_SELECTOR, "button[data-testid='button-place-a-bet']")
-        bet_button.click()
+        place_bet_button = driver.find_element(By.CSS_SELECTOR, "button[data-testid='button-place-a-bet']")
+        place_bet_button.click()
         time.sleep(2)
-        bet_button = driver.find_element(By.CSS_SELECTOR, "button[data-testid='button-place-a-bet']")
-        bet_button.click()
+        place_bet_button = driver.find_element(By.CSS_SELECTOR, "button[data-testid='button-place-a-bet']")
+        place_bet_button.click()
         print("Bet placed!")
         time.sleep(4)
     except NoSuchElementException:
-        print("Could not find final bet button.")
+        print("Could not find final bet button (second click).")
+        return (0, 0)
+
+    return (stake_used, potential_win)
