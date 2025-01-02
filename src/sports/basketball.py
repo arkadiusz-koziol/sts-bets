@@ -2,7 +2,9 @@ import time
 import re
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException
-from sports.football import parse_odd_text, place_bet
+
+from sports.football import parse_odd_text
+from common.bet_logic import get_balance, save_bets_data
 
 def navigate_to_basketball_live(driver):
     driver.get("https://www.sts.pl/live/koszykowka")
@@ -25,6 +27,7 @@ def parse_basketball_time(time_str):
 
     if minute_match:
         used_in_period = int(minute_match.group(1))
+
     quarter_length = 10
     half_length = 20
 
@@ -33,7 +36,7 @@ def parse_basketball_time(time_str):
         total_elapsed = (current_period - 1) * quarter_length + used_in_period
     elif half_match:
         total_elapsed = (current_period - 1) * half_length + used_in_period
-    
+
     return total_game_minutes, total_elapsed
 
 def scrape_basketball_matches(driver):
@@ -74,10 +77,8 @@ def scrape_basketball_matches(driver):
 
             odds_buttons = match_el.find_elements(By.CSS_SELECTOR, "sds-odds-button")
             if len(odds_buttons) >= 2:
-                odd_1_str = odds_buttons[0].find_element(
-                    By.CSS_SELECTOR, "[data-testid='odds-value']").text
-                odd_2_str = odds_buttons[1].find_element(
-                    By.CSS_SELECTOR, "[data-testid='odds-value']").text
+                odd_1_str = odds_buttons[0].find_element(By.CSS_SELECTOR, "[data-testid='odds-value']").text
+                odd_2_str = odds_buttons[1].find_element(By.CSS_SELECTOR, "[data-testid='odds-value']").text
             else:
                 odd_1_str = "0.00"
                 odd_2_str = "0.00"
@@ -120,7 +121,7 @@ def pick_basketball_bet_type(match_info):
     the_min = min(odd_1, odd_2)
     the_max = max(odd_1, odd_2)
 
-    if the_min < 1.15:
+    if the_min < 1.20:
         return None
     if the_max > 2.0:
         return None
@@ -133,3 +134,86 @@ def pick_basketball_bet_type(match_info):
         return ("home", odd_1)
     else:
         return ("away", odd_2)
+
+def place_basketball_bet(driver, match_el, match_info, bets_data):
+    """
+    Place a basketball bet -> save to .json if success
+    """
+    bet_data = pick_basketball_bet_type(match_info)
+    if not bet_data:
+        return (0, 0)
+
+    outcome, odd_val = bet_data
+    label_map = {"home": "1", "away": "2"}  # only 2 outcomes
+    label_to_find = label_map.get(outcome)
+    if not label_to_find:
+        print(f"[BASKETBALL] Unknown outcome={outcome}")
+        return (0, 0)
+
+    stake_used = 2.0
+    potential_win = 0.0
+
+    # 1) click correct odds
+    try:
+        odds_buttons = match_el.find_elements(By.CSS_SELECTOR, "sds-odds-button")
+        for btn in odds_buttons:
+            try:
+                label_el = btn.find_element(By.CSS_SELECTOR, ".odds-button__label")
+                if label_el.text.strip().lower() == label_to_find.lower():
+                    btn.click()
+                    print(f"[BASKETBALL] Clicked odds '{label_el.text.strip()}' in tile.")
+                    time.sleep(2)
+                    break
+            except NoSuchElementException:
+                pass
+    except Exception as e:
+        print(f"[BASKETBALL place_bet] error selecting bet => {e}")
+        return (0, 0)
+
+    # 2) set stake
+    try:
+        stake_input = driver.find_element(By.CSS_SELECTOR, "sts-shared-input[data-cy='ticket-stake'] input#AMOUNT")
+        stake_input.clear()
+        stake_input.send_keys(str(stake_used))
+        print(f"[BASKETBALL] Stake set to {stake_used:.2f}")
+        time.sleep(2)
+    except NoSuchElementException:
+        print("[BASKETBALL] stake input not found => fail.")
+        return (0, 0)
+
+    # 3) parse potential
+    try:
+        place_bet_button = driver.find_element(By.CSS_SELECTOR, "button[data-testid='button-place-a-bet']")
+        potential_el = place_bet_button.find_element(By.CSS_SELECTOR, ".submit-button__content")
+        raw_text = potential_el.text.strip()
+        cleaned = raw_text.replace(",", ".").replace("zł","").replace("\xa0","").strip()
+        potential_win = float(cleaned)
+        print(f"[BASKETBALL] Potential win: {potential_win:.2f}")
+    except Exception:
+        print("[BASKETBALL] could not parse potential => 0.0")
+
+    # 4) confirm bet
+    try:
+        place_bet_button.click()
+        time.sleep(2)
+        place_bet_button = driver.find_element(By.CSS_SELECTOR, "button[data-testid='button-place-a-bet']")
+        place_bet_button.click()
+        print("[BASKETBALL] Bet placed!")
+        time.sleep(3)
+    except NoSuchElementException:
+        print("[BASKETBALL] final bet button not found => partial fail.")
+
+    # 5) save immediately
+    if stake_used > 0:
+        bets_data["betted_matches"].add(match_info["match_id"])
+        bets_data["bets_details"].append({
+            "sport": "basketball",
+            "match_id": match_info["match_id"],
+            "teams": f"{match_info['team_home']} vs {match_info['team_away']}",
+            "stake": stake_used,
+            "potential_win": potential_win,
+            "balance_after": get_balance(driver),
+        })
+        save_bets_data(bets_data)
+
+    return (stake_used, potential_win)

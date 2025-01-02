@@ -19,17 +19,21 @@ def load_bets_data():
     if not os.path.exists(json_path):
         return {
             "betted_matches": set(),
+            "betted_coupons": set(),   # NEW: track coupon IDs
             "bets_details": []
         }
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
             data["betted_matches"] = set(data.get("betted_matches", []))
+            # If not present, initialize empty set
+            data["betted_coupons"] = set(data.get("betted_coupons", []))
             return data
     except Exception as e:
         print(f"Error loading {json_path}: {e}")
         return {
             "betted_matches": set(),
+            "betted_coupons": set(),
             "bets_details": []
         }
 
@@ -38,9 +42,9 @@ def save_bets_data(bets_data):
 
     data_to_save = {
         "betted_matches": list(bets_data["betted_matches"]),
+        "betted_coupons": list(bets_data.get("betted_coupons", [])),
         "bets_details": bets_data["bets_details"],
         "last_saved": time.strftime("%Y-%m-%d %H:%M:%S")
-
     }
     try:
         with open(json_path, "w", encoding="utf-8") as f:
